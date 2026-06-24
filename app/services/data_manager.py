@@ -3,34 +3,50 @@ import os
 
 class DataProcessor:
     @staticmethod
-    def load_data(file) -> pd.DataFrame:
-        """Безопасное чтение файлов с автоопределением кодировки и защитой от пустых данных."""
+    def load_data(file_source) -> pd.DataFrame:
+        """Безопасное чтение одного файла или автоматическая склейка массива из тысяч файлов."""
         try:
-            # Если передан путь к файлу в виде строки
-            if isinstance(file, str):
-                if not os.path.exists(file) or os.path.getsize(file) == 0:
-                    raise ValueError("Файл пуст или отсутствует.")
+            # Сценарий 1: Если на вход пришел массив/список файлов (мультизагрузка)
+            if isinstance(file_source, list):
+                if not file_source:
+                    raise ValueError("Список файлов пуст.")
                 
-                try:
-                    df = pd.read_csv(file, encoding='utf-8')
-                except Exception:
+                # Собираем все датафреймы в один список
+                dfs = []
+                for f in file_source:
                     try:
-                        df = pd.read_csv(file, encoding='cp1251')
+                        # Пробуем прочитать текущий файл с автоопределением кодировки
+                        current_df = pd.read_csv(f, encoding='utf-8')
                     except Exception:
-                        df = pd.read_csv(file, encoding='latin1')
+                        try:
+                            f.seek(0)
+                            current_df = pd.read_csv(f, encoding='cp1251')
+                        except Exception:
+                            f.seek(0)
+                            current_df = pd.read_csv(f, encoding='latin1')
+                    dfs.append(current_df)
+                
+                # Быстро склеиваем тысячи файлов в единую огромную таблицу
+                df = pd.concat(dfs, ignore_index=True)
+                
+            # Сценарий 2: Если передан путь к локальному общему файлу на диске в виде строки
+            elif isinstance(file_source, str):
+                if not os.path.exists(file_source) or os.path.getsize(file_source) == 0:
+                    raise ValueError("Файл пуст или отсутствует.")
+                try:
+                    df = pd.read_csv(file_source, encoding='utf-8')
+                except Exception:
+                    df = pd.read_csv(file_source, encoding='cp1251')
+                    
+            # Сценарий 3: Если передан один загруженный файл через браузер
             else:
-                # Если файл загружен через браузер
                 try:
-                    df = pd.read_csv(file, encoding='utf-8')
+                    df = pd.read_csv(file_source, encoding='utf-8')
                 except Exception:
-                    file.seek(0)
-                    try:
-                        df = pd.read_csv(file, encoding='cp1251')
-                    except Exception:
-                        file.seek(0)
-                        df = pd.read_csv(file, encoding='latin1')
+                    file_source.seek(0)
+                    df = pd.read_csv(file_source, encoding='cp1251')
 
-            # Проверяем и создаем обязательные колонки
+            # Проверяем и создаем обязательные колонки, чтобы сайт никогда не падал
             if "ID" not in df.columns:
                 df["ID"] = range(1, len(df) + 1)
             if "Дата" not in df.columns:
@@ -48,7 +64,7 @@ class DataProcessor:
             return df
             
         except Exception as e:
-            # Бронированный от сбоев пустой датафрейм (БЕЗ использования скобок и запятых)
+            # Аварийный датафрейм без использования ломающихся запятых
             columns = ["ID", "Дата", "Категория", "Количество", "Цена_USD", "Выручка_USD"]
             fallback_df = pd.DataFrame(columns=columns)
             fallback_df.loc[0] = [1, "2026-06-24", "Демо", 1, 100.0, 100.0]
