@@ -1,87 +1,49 @@
-import pandas as pd
+import streamlit as st
 import os
+from app.services.data_manager import DataProcessor
+from app.utils.helpers import ensure_demo_data
 
-class DataProcessor:
-    @staticmethod
-    def load_data(file_source) -> pd.DataFrame:
-        """Безопасное чтение одного файла или автоматическая склейка массива из тысяч файлов."""
-        try:
-            # Сценарий 1: Если на вход пришел массив/список файлов (мультизагрузка)
-            if isinstance(file_source, list):
-                if not file_source:
-                    raise ValueError("Список файлов пуст.")
-                
-                # Собираем все датафреймы в один список
-                dfs = []
-                for f in file_source:
-                    try:
-                        # Пробуем прочитать текущий файл с автоопределением кодировки
-                        current_df = pd.read_csv(f, encoding='utf-8')
-                    except Exception:
-                        try:
-                            f.seek(0)
-                            current_df = pd.read_csv(f, encoding='cp1251')
-                        except Exception:
-                            f.seek(0)
-                            current_df = pd.read_csv(f, encoding='latin1')
-                    dfs.append(current_df)
-                
-                # Быстро склеиваем тысячи файлов в единую огромную таблицу
-                df = pd.concat(dfs, ignore_index=True)
-                
-            # Сценарий 2: Если передан путь к локальному общему файлу на диске в виде строки
-            elif isinstance(file_source, str):
-                if not os.path.exists(file_source) or os.path.getsize(file_source) == 0:
-                    raise ValueError("Файл пуст или отсутствует.")
-                try:
-                    df = pd.read_csv(file_source, encoding='utf-8')
-                except Exception:
-                    df = pd.read_csv(file_source, encoding='cp1251')
-                    
-            # Сценарий 3: Если передан один загруженный файл через браузер
-            else:
-                try:
-                    df = pd.read_csv(file_source, encoding='utf-8')
-                except Exception:
-                    file_source.seek(0)
-                    df = pd.read_csv(file_source, encoding='cp1251')
+def render_page():
+    st.title("📊 Импорт данных из таблицы-реестра")
+    st.markdown("Модуль импорта: загрузите вашу общую таблицу, и данные из неё автоматически запишутся на сайт.")
 
-            # Проверяем и создаем обязательные колонки, чтобы сайт никогда не падал
-            if "ID" not in df.columns:
-                df["ID"] = range(1, len(df) + 1)
-            if "Дата" not in df.columns:
-                df["Дата"] = "2026-06-24"
-            if "Категория" not in df.columns:
-                text_cols = df.select_dtypes(include=['object']).columns
-                df["Категория"] = df[text_cols] if len(text_cols) > 0 else "Общая"
-            if "Количество" not in df.columns:
-                df["Количество"] = 1
-            if "Цена_USD" not in df.columns:
-                num_cols = df.select_dtypes(include=['number']).columns
-                df["Цена_USD"] = df[num_cols] if len(num_cols) > 0 else 100.0
+    source = st.radio("Выберите источник данных:", ["Актуальная база сайта", "Импортировать новую таблицу CSV"])
+    filepath = "data/mock_data.csv"
+    
+    if not os.path.exists(filepath) or os.path.getsize(filepath) == 0:
+        ensure_demo_data()
+        
+    try:
+        df = DataProcessor.load_data(filepath)
+    except Exception:
+        ensure_demo_data()
+        df = DataProcessor.load_data(filepath)
+
+    if source == "Актуальная база сайта":
+        st.success(f"Отображаются актуальные записанные данные ({len(df)} записей).")
+    else:
+        # Компонент принимает одну главную таблицу-реестр
+        uploaded_file = st.file_uploader(
+            "Выберите файл таблицы CSV для записи на сайт", 
+            type=["csv"], 
+            accept_multiple_files=False
+        )
+        
+        if uploaded_file is not None:
+            try:
+                # Читаем и обрабатываем строки из загруженной таблицы
+                new_df = DataProcessor.load_data(uploaded_file)
                 
-            df["Выручка_USD"] = df["Количество"] * df["Цена_USD"]
-            return df
-            
-        except Exception as e:
-            # Аварийный датафрейм без использования ломающихся запятых
-            columns = ["ID", "Дата", "Категория", "Количество", "Цена_USD", "Выручка_USD"]
-            fallback_df = pd.DataFrame(columns=columns)
-            fallback_df.loc[0] = [1, "2026-06-24", "Демо", 1, 100.0, 100.0]
-            return fallback_df
+                # Физически записываем и сохраняем эти данные в систему сайта
+                os.makedirs("data", exist_ok=True)
+                new_df.to_csv(filepath, index=False, encoding="utf-8")
+                
+                st.success(f"🚀 Данные из таблицы успешно записаны на сайт! Всего импортировано строк: {len(new_df)}")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Ошибка при записи таблицы на сайт: {e}")
 
-    @staticmethod
-    def filter_by_category(df: pd.DataFrame, category: str) -> pd.DataFrame:
-        if category == "Все категории" or "Категория" not in df.columns:
-            return df
-        return df[df["Категория"] == category]
-
-    @staticmethod
-    def calculate_summary(df: pd.DataFrame) -> dict:
-        if df.empty:
-            return {"total_revenue": 0.0, "total_items": 0, "avg_price": 0.0}
-        return {
-            "total_revenue": float(df["Выручка_USD"].sum()),
-            "total_items": int(df["Количество"].sum()),
-            "avg_price": float(df["Цена_USD"].mean())
-        }
+    if df is not None:
+        st.session_state["dataset"] = df
+        st.subheader("📋 Текущая таблица исходных данных на сайте")
+        st.dataframe(df, use_container_width=True)
