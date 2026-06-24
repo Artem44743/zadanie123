@@ -1,49 +1,65 @@
-import streamlit as st
+import pandas as pd
 import os
-from app.services.data_manager import DataProcessor
-from app.utils.helpers import ensure_demo_data
 
-def render_page():
-    st.title("📊 Импорт данных из таблицы-реестра")
-    st.markdown("Модуль импорта: загрузите вашу общую таблицу, и данные из неё автоматически запишутся на сайт.")
+class DataProcessor:
+    @staticmethod
+    def load_data(file) -> pd.DataFrame:
+        """Безопасное чтение таблицы-реестра с автоопределением структуры."""
+        try:
+            if isinstance(file, str):
+                if not os.path.exists(file) or os.path.getsize(file) == 0:
+                    raise ValueError("Файл пуст или отсутствует.")
+                try:
+                    df = pd.read_csv(file, encoding='utf-8')
+                except Exception:
+                    df = pd.read_csv(file, encoding='cp1251')
+            else:
+                try:
+                    df = pd.read_csv(file, encoding='utf-8')
+                except Exception:
+                    file.seek(0)
+                    try:
+                        df = pd.read_csv(file, encoding='cp1251')
+                    except Exception:
+                        file.seek(0)
+                        df = pd.read_csv(file, encoding='latin1')
 
-    source = st.radio("Выберите источник данных:", ["Актуальная база сайта", "Импортировать новую таблицу CSV"])
-    filepath = "data/mock_data.csv"
-    
-    if not os.path.exists(filepath) or os.path.getsize(filepath) == 0:
-        ensure_demo_data()
-        
-    try:
-        df = DataProcessor.load_data(filepath)
-    except Exception:
-        ensure_demo_data()
-        df = DataProcessor.load_data(filepath)
-
-    if source == "Актуальная база сайта":
-        st.success(f"Отображаются актуальные записанные данные ({len(df)} записей).")
-    else:
-        # Компонент принимает одну главную таблицу-реестр
-        uploaded_file = st.file_uploader(
-            "Выберите файл таблицы CSV для записи на сайт", 
-            type=["csv"], 
-            accept_multiple_files=False
-        )
-        
-        if uploaded_file is not None:
-            try:
-                # Читаем и обрабатываем строки из загруженной таблицы
-                new_df = DataProcessor.load_data(uploaded_file)
+            # Автоматически проверяем и создаем обязательные колонки
+            if "ID" not in df.columns:
+                df["ID"] = range(1, len(df) + 1)
+            if "Дата" not in df.columns:
+                df["Дата"] = "2026-06-24"
+            if "Категория" not in df.columns:
+                text_cols = df.select_dtypes(include=['object']).columns
+                df["Категория"] = df[text_cols] if len(text_cols) > 0 else "Общая"
+            if "Количество" not in df.columns:
+                df["Количество"] = 1
+            if "Цена_USD" not in df.columns:
+                num_cols = df.select_dtypes(include=['number']).columns
+                df["Цена_USD"] = df[num_cols] if len(num_cols) > 0 else 100.0
                 
-                # Физически записываем и сохраняем эти данные в систему сайта
-                os.makedirs("data", exist_ok=True)
-                new_df.to_csv(filepath, index=False, encoding="utf-8")
-                
-                st.success(f"🚀 Данные из таблицы успешно записаны на сайт! Всего импортировано строк: {len(new_df)}")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Ошибка при записи таблицы на сайт: {e}")
+            df["Выручка_USD"] = df["Количество"] * df["Цена_USD"]
+            return df
+            
+        except Exception as e:
+            # Аварийная заглушка без использования ломающихся запятых
+            columns = ["ID", "Дата", "Категория", "Количество", "Цена_USD", "Выручка_USD"]
+            fallback_df = pd.DataFrame(columns=columns)
+            fallback_df.loc = [1, "2026-06-24", "Демо", 1, 100.0, 100.0]
+            return fallback_df
 
-    if df is not None:
-        st.session_state["dataset"] = df
-        st.subheader("📋 Текущая таблица исходных данных на сайте")
-        st.dataframe(df, use_container_width=True)
+    @staticmethod
+    def filter_by_category(df: pd.DataFrame, category: str) -> pd.DataFrame:
+        if category == "Все категории" or "Категория" not in df.columns:
+            return df
+        return df[df["Категория"] == category]
+
+    @staticmethod
+    def calculate_summary(df: pd.DataFrame) -> dict:
+        if df.empty:
+            return {"total_revenue": 0.0, "total_items": 0, "avg_price": 0.0}
+        return {
+            "total_revenue": float(df["Выручка_USD"].sum()),
+            "total_items": int(df["Количество"].sum()),
+            "avg_price": float(df["Цена_USD"].mean())
+        }
