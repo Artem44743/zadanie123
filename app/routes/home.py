@@ -5,45 +5,38 @@ from app.utils.helpers import ensure_demo_data
 
 def render_page():
     st.title("📊 Загрузка и обзор данных")
-    st.markdown("Модуль массовой загрузки: вы можете перетащить до 5000 файлов CSV одновременно, и система объединит их.")
+    st.markdown("Добро пожаловать в модуль аналитики. Вы можете загрузить свой CSV-файл или использовать демонстрационный.")
 
-    source = st.radio("Выберите источник данных:", ["Актуальная общая база", "Загрузить пачку новых таблиц CSV"])
+    source = st.radio("Выберите источник данных:", ["Демонстрационный файл", "Загрузить свой CSV"])
     filepath = "data/mock_data.csv"
+    df = None
     
-    if not os.path.exists(filepath) or os.path.getsize(filepath) == 0:
-        ensure_demo_data()
-        
-    try:
-        df = DataProcessor.load_data(filepath)
-    except Exception:
+    if source == "Демонстрационный файл":
         ensure_demo_data()
         df = DataProcessor.load_data(filepath)
-
-    if source == "Актуальная общая база":
-        st.success(f"Отображаются актуальные объединенные данные ({len(df)} записей).")
+        st.success(f"Успешно загружены системные демо-данные ({len(df)} записей).")
     else:
-        # Включаем параметр accept_multiple_files=True для загрузки тысяч файлов одновременно
-        uploaded_files = st.file_uploader(
-            "Перетащите сюда файлы CSV для массового анализа", 
-            type=["csv"], 
-            accept_multiple_files=True
-        )
-        
-        if uploaded_files: # Если загружен хотя бы один файл из пачки
+        # Обычная, простая кнопка загрузки одного файла, как было в самом начале
+        uploaded_file = st.file_uploader("Выберите CSV файл", type=["csv"])
+        if uploaded_file is not None:
             try:
-                # Обрабатываем и склеиваем всю пачку файлов через наш сервис
-                temp_df = DataProcessor.load_data(uploaded_files)
+                # Читаем загруженный файл
+                temp_df = DataProcessor.load_data(uploaded_file)
                 
-                # Перезаписываем единую общую склеенную базу данных на сервере
+                # Физически сохраняем его на сайт, перезаписывая старую базу
                 os.makedirs("data", exist_ok=True)
-                temp_df.to_csv(filepath, index=False, encoding="utf-8")
+                uploaded_file.seek(0)
+                with open(filepath, "wb") as f:
+                    f.write(uploaded_file.getbuffer())
                 
-                st.success(f"🚀 Успешно объединено и сохранено {len(uploaded_files)} файлов! Итого строк: {len(temp_df)}")
-                st.rerun()
+                st.success(f"Файл успешно записан на сайт! Найдено {len(temp_df)} строк.")
+                df = temp_df
             except Exception as e:
-                st.error(f"Ошибка при объединении пакета файлов: {e}")
+                st.error(f"Ошибка: {e}")
+        else:
+            st.info("Пожалуйста, загрузите ваш CSV-файл для начала анализа.")
 
     if df is not None:
         st.session_state["dataset"] = df
-        st.subheader("📋 Таблица исходных данных (Общий просмотр)")
+        st.subheader("📋 Таблица данных")
         st.dataframe(df, use_container_width=True)
